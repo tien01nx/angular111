@@ -1,0 +1,991 @@
+-- Script tạo bảng Overtime trong SQL Server
+CREATE TABLE Overtime (
+    Id INT IDENTITY(1,1) PRIMARY KEY,
+    Code NVARCHAR(50) NOT NULL,
+    Name NVARCHAR(200) NOT NULL,
+    Date DATETIME NOT NULL,
+    Hours DECIMAL(5,2) NOT NULL,
+    CreatedAt DATETIME DEFAULT GETDATE()
+);
+
+-- Thêm dữ liệu mẫu
+INSERT INTO Overtime (Code, Name, Date, Hours) VALUES
+('NV001', N'Nguyễn Văn A', DATEADD(MINUTE, -115, GETDATE()), 2),
+('NV002', N'Trần Thị B', DATEADD(MINUTE, -117, GETDATE()), 2),
+('NV003', N'Lê Văn C', DATEADD(MINUTE, -60, GETDATE()), 2),
+('NV004', N'Phạm Văn D', DATEADD(MINUTE, -118, GETDATE()), 2);
+
+-- Query kiểm tra
+SELECT 
+    Code,
+    Name,
+    Date,
+    Hours,
+    DATEADD(HOUR, Hours, Date) AS EndTime,
+    DATEDIFF(MINUTE, GETDATE(), DATEADD(HOUR, Hours, Date)) AS MinutesUntilEnd
+FROM Overtime
+WHERE DATEADD(HOUR, Hours, Date) BETWEEN GETDATE() AND DATEADD(MINUTE, 10, GETDATE())
+ORDER BY EndTime;
+
+
+namespace AlerAudio.Models
+{
+    public class Overtime
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public DateTime Date { get; set; }
+        public double Hours { get; set; }
+
+        // Thời gian dự kiến về (Date + Hours)
+        public DateTime EndTime => Date.AddHours(Hours);
+    }
+}
+
+
+using AlerAudio.Models;
+
+namespace AlerAudio.Services
+{
+    public interface IOvertimeRepository
+    {
+        Task<List<Overtime>> GetOvertimesAsync();
+    }
+}
+
+namespace AlerAudio.Services
+{
+    public interface ITextToSpeechService
+    {
+        void Speak(string text);
+        Task SpeakAsync(string text);
+        void PlayAudioFile(string employeeCode);
+        Task PlayAudioFileAsync(string employeeCode);
+        Task PlayStartAudioAsync();
+        Task PlayEndAudioAsync();
+    }
+}
+
+
+using AlerAudio.Models;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace AlerAudio.Services
+{
+    public class OvertimeAlertService : BackgroundService
+    {
+        private readonly IOvertimeRepository _overtimeRepository;
+        private readonly ITextToSpeechService _textToSpeechService;
+        private readonly ILogger<OvertimeAlertService> _logger;
+        private readonly HashSet<string> _alertedCodes = new HashSet<string>();
+        private readonly int _checkIntervalSeconds = 60;
+        private readonly int _alertMinutesBefore = 10; // Cảnh báo trước 10 phút
+
+        public OvertimeAlertService(
+            IOvertimeRepository overtimeRepository,
+            ITextToSpeechService textToSpeechService,
+            ILogger<OvertimeAlertService> logger)
+        {
+            _overtimeRepository = overtimeRepository;
+            _textToSpeechService = textToSpeechService;
+            _logger = logger;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("Overtime Alert Service đang chạy...");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await CheckAndAlertAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Lỗi khi kiểm tra overtime");
+                }
+
+                // Đợi 60 giây trước khi kiểm tra lần tiếp theo
+                await Task.Delay(TimeSpan.FromSeconds(_checkIntervalSeconds), stoppingToken);
+            }
+        }
+
+        private async Task CheckAndAlertAsync()
+        {
+            var overtimes = await _overtimeRepository.GetOvertimesAsync();
+            var now = DateTime.Now;
+
+            // Lọc những người sắp đến giờ về (trong vòng 10 phút tới)
+            var upcomingEndTimes = overtimes
+                .Where(o => !_alertedCodes.Contains(o.Code)) // Chưa được cảnh báo
+                .Where(o => o.EndTime >= now && o.EndTime <= now.AddMinutes(_alertMinutesBefore))
+                .OrderBy(o => o.EndTime)
+                .ToList();
+
+            if (upcomingEndTimes.Any())
+            {
+                _logger.LogInformation($"Tìm thấy {upcomingEndTimes.Count} người sắp đến giờ về");
+
+                // Nhóm theo khung giờ (cùng phút)
+                var groupedByTime = upcomingEndTimes
+                    .GroupBy(o => new { o.EndTime.Hour, o.EndTime.Minute })
+                    .ToList();
+
+                foreach (var group in groupedByTime)
+                {
+                    var employees = group.ToList();
+                    
+                    if (employees.Count == 1)
+                    {
+                        // Chỉ 1 người - Phát file audio của người đó
+                        var employee = employees[0];
+                        _logger.LogInformation($"Thông báo: Mã {employee.Code} - {employee.Name}");
+                        
+                        // Lặp lại 3 lần: Mở đầu -> Tên -> Kết thúc
+                        for (int i = 0; i < 3; i++)
+                        {
+                            _logger.LogInformation($"Lần thông báo {i + 1}/3");
+                            
+                            await _textToSpeechService.PlayStartAudioAsync(); // Mở đầu
+                            await Task.Delay(300);
+                            await _textToSpeechService.PlayAudioFileAsync(employee.Code); // Tên nhân viên
+                            await Task.Delay(300);
+                            await _textToSpeechService.PlayEndAudioAsync(); // Kết thúc
+                            
+                            if (i < 2)
+                            {
+                                await Task.Delay(2000); // Delay 2 giây giữa các lần lặp
+                            }
+                        }
+                        
+                        _alertedCodes.Add(employee.Code);
+                    }
+                    else
+                    {
+                        // Nhiều người cùng khung giờ
+                        var namesList = string.Join(", ", employees.Select(e => $"{e.Code} {e.Name}"));
+                        _logger.LogInformation($"Thông báo nhóm {employees.Count} người: {namesList}");
+                        
+                        // Lặp lại 3 lần: Mở đầu -> Danh sách tất cả -> Kết thúc
+                        for (int round = 0; round < 3; round++)
+                        {
+                            _logger.LogInformation($"Lần thông báo {round + 1}/3");
+                            
+                            // Mở đầu
+                            await _textToSpeechService.PlayStartAudioAsync();
+                            await Task.Delay(500);
+                            
+                            // Phát audio của TẤT CẢ người trong danh sách
+                            foreach (var emp in employees)
+                            {
+                                await _textToSpeechService.PlayAudioFileAsync(emp.Code);
+                                await Task.Delay(500); // Delay ngắn giữa các người
+                            }
+                            
+                            // Kết thúc
+                            await Task.Delay(300);
+                            await _textToSpeechService.PlayEndAudioAsync();
+                            
+                            if (round < 2)
+                            {
+                                await Task.Delay(2000); // Delay 2 giây trước khi lặp lại
+                            }
+                        }
+                        
+                        foreach (var emp in employees)
+                        {
+                            _alertedCodes.Add(emp.Code);
+                        }
+                    }
+
+                    // Delay một chút giữa các nhóm để tránh nói chồng lên nhau
+                    if (groupedByTime.IndexOf(group) < groupedByTime.Count - 1)
+                    {
+                        await Task.Delay(2000);
+                    }
+                }
+            }
+
+            // Reset danh sách đã cảnh báo cho những người đã quá giờ (để tránh tràn bộ nhớ)
+            var expiredCodes = overtimes
+                .Where(o => _alertedCodes.Contains(o.Code) && o.EndTime < now.AddMinutes(-30))
+                .Select(o => o.Code)
+                .ToList();
+
+            foreach (var code in expiredCodes)
+            {
+                _alertedCodes.Remove(code);
+            }
+        }
+    }
+}
+
+
+using AlerAudio.Models;
+
+namespace AlerAudio.Services
+{
+    public class OvertimeRepository : IOvertimeRepository
+    {
+        // Demo data - Thay thế bằng database thực tế
+        public async Task<List<Overtime>> GetOvertimesAsync()
+        {
+            // TODO: Kết nối với database thực tế
+            // Ví dụ data demo - 3 người về cùng khung giờ để test
+            return await Task.FromResult(new List<Overtime>
+            {
+                new Overtime 
+                { 
+                    Code = "NV001", 
+                    Name = "Nguyễn Văn A", 
+                    Date = DateTime.Now.AddMinutes(-115), // Sẽ về sau 5 phút
+                    Hours = 2 
+                },
+                new Overtime 
+                { 
+                    Code = "NV002", 
+                    Name = "Trần Thị B", 
+                    Date = DateTime.Now.AddMinutes(-115), // Sẽ về sau 5 phút (cùng giờ với NV001)
+                    Hours = 2 
+                },
+                new Overtime 
+                { 
+                    Code = "NV003", 
+                    Name = "Lê Văn C", 
+                    Date = DateTime.Now.AddMinutes(-115), // Sẽ về sau 5 phút (cùng giờ với NV001 và NV002)
+                    Hours = 2 
+                }
+            });
+        }
+    }
+}
+
+/*
+using AlerAudio.Models;
+using Microsoft.Data.SqlClient;
+
+namespace AlerAudio.Services
+{
+    // Sử dụng class này khi kết nối với SQL Server thực tế
+    // Cần cài package: dotnet add package Microsoft.Data.SqlClient
+    public class SqlServerOvertimeRepository : IOvertimeRepository
+    {
+        private readonly string _connectionString;
+
+        public SqlServerOvertimeRepository(string connectionString)
+        {
+            _connectionString = connectionString;
+        }
+
+        public async Task<List<Overtime>> GetOvertimesAsync()
+        {
+            var overtimes = new List<Overtime>();
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                var query = @"
+                    SELECT Code, Name, Date, Hours 
+                    FROM Overtime 
+                    WHERE Date >= CAST(GETDATE() AS DATE)
+                    ORDER BY Date, Code";
+
+                using (var command = new SqlCommand(query, connection))
+                {
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            overtimes.Add(new Overtime
+                            {
+                                Code = reader.GetString(0),
+                                Name = reader.GetString(1),
+                                Date = reader.GetDateTime(2),
+                                Hours = reader.GetDouble(3)
+                            });
+                        }
+                    }
+                }
+            }
+
+            return overtimes;
+        }
+    }
+}
+*/
+using System.Speech.Synthesis;
+using System.Globalization;
+using NAudio.Wave;
+
+namespace AlerAudio.Services
+{
+    public class TextToSpeechService : ITextToSpeechService, IDisposable
+    {
+        private readonly SpeechSynthesizer _synthesizer;
+        private readonly bool _hasVietnameseVoice;
+        private readonly string _audioFolder;
+
+        public TextToSpeechService()
+        {
+            _synthesizer = new SpeechSynthesizer();
+            
+            // Đường dẫn đến folder chứa audio files
+            _audioFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AudioFiles");
+            
+            // Tạo folder nếu chưa có
+            if (!Directory.Exists(_audioFolder))
+            {
+                Directory.CreateDirectory(_audioFolder);
+                Console.WriteLine($"📁 Đã tạo folder audio: {_audioFolder}");
+                Console.WriteLine("💡 Vui lòng thêm các file audio:");
+                Console.WriteLine("   - start.mp3 (hoặc .wav) - Audio mở đầu thông báo");
+                Console.WriteLine("   - end.mp3 (hoặc .wav) - Audio kết thúc thông báo");
+                Console.WriteLine("   - NV001.mp3, NV002.mp3, ... - Audio cho từng nhân viên");
+                Console.WriteLine();
+            }
+            
+            // Tìm và chọn giọng tiếng Việt nếu có
+            var vietnameseVoice = _synthesizer.GetInstalledVoices()
+                .FirstOrDefault(v => v.VoiceInfo.Culture.Name.StartsWith("vi"));
+
+            if (vietnameseVoice != null)
+            {
+                _synthesizer.SelectVoice(vietnameseVoice.VoiceInfo.Name);
+                _hasVietnameseVoice = true;
+                Console.WriteLine($"✓ Đang sử dụng giọng tiếng Việt: {vietnameseVoice.VoiceInfo.Name}");
+            }
+            else
+            {
+                _hasVietnameseVoice = false;
+                var femaleVoice = _synthesizer.GetInstalledVoices()
+                    .FirstOrDefault(v => v.VoiceInfo.Gender == VoiceGender.Female);
+                
+                if (femaleVoice != null)
+                {
+                    _synthesizer.SelectVoice(femaleVoice.VoiceInfo.Name);
+                }
+                
+                Console.WriteLine("⚠ Chưa cài giọng tiếng Việt - Đang dùng giọng mặc định");
+                Console.WriteLine("📌 Hướng dẫn cài giọng tiếng Việt:");
+                Console.WriteLine("   1. Mở Settings > Time & Language > Language");
+                Console.WriteLine("   2. Add Vietnamese language");
+                Console.WriteLine("   3. Download Text-to-Speech package");
+                Console.WriteLine();
+                Console.WriteLine("Các giọng có sẵn:");
+                foreach (var voice in _synthesizer.GetInstalledVoices())
+                {
+                    var gender = voice.VoiceInfo.Gender == VoiceGender.Female ? "Nữ" : "Nam";
+                    Console.WriteLine($"   - {voice.VoiceInfo.Name} ({voice.VoiceInfo.Culture.Name}) [{gender}]");
+                }
+                Console.WriteLine();
+            }
+            
+            _synthesizer.Rate = _hasVietnameseVoice ? 0 : -1;
+            _synthesizer.Volume = 100;
+        }
+
+        public void PlayAudioFile(string employeeCode)
+        {
+            PlayAudioFileAsync(employeeCode).GetAwaiter().GetResult();
+        }
+
+        public async Task PlayStartAudioAsync()
+        {
+            await PlaySpecialAudioAsync("start", "🔔 Mở đầu");
+        }
+
+        public async Task PlayEndAudioAsync()
+        {
+            await PlaySpecialAudioAsync("end", "✅ Kết thúc");
+        }
+
+        private async Task PlaySpecialAudioAsync(string fileName, string description)
+        {
+            try
+            {
+                var audioExtensions = new[] { ".mp3", ".wav", ".wma", ".m4a" };
+                string? audioFile = null;
+
+                foreach (var ext in audioExtensions)
+                {
+                    var filePath = Path.Combine(_audioFolder, $"{fileName}{ext}");
+                    if (File.Exists(filePath))
+                    {
+                        audioFile = filePath;
+                        break;
+                    }
+                }
+
+                if (audioFile != null && File.Exists(audioFile))
+                {
+                    Console.WriteLine($"🔊 {description}: {Path.GetFileName(audioFile)}");
+                    await Task.Run(() => PlayAudio(audioFile));
+                }
+                else
+                {
+                    Console.WriteLine($"⚠ Không tìm thấy file {fileName}.mp3/.wav trong folder {_audioFolder}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Lỗi phát {fileName} audio: {ex.Message}");
+            }
+        }
+
+        public async Task PlayAudioFileAsync(string employeeCode)
+        {
+            try
+            {
+                // Tìm file audio của nhân viên (hỗ trợ nhiều định dạng)
+                var audioExtensions = new[] { ".mp3", ".wav", ".wma", ".m4a" };
+                string? audioFile = null;
+
+                foreach (var ext in audioExtensions)
+                {
+                    var filePath = Path.Combine(_audioFolder, $"{employeeCode}{ext}");
+                    if (File.Exists(filePath))
+                    {
+                        audioFile = filePath;
+                        break;
+                    }
+                }
+
+                if (audioFile != null && File.Exists(audioFile))
+                {
+                    Console.WriteLine($"🔊 Phát file audio: {Path.GetFileName(audioFile)}");
+                    await Task.Run(() => PlayAudio(audioFile));
+                }
+                else
+                {
+                    Console.WriteLine($"⚠ Không tìm thấy file audio cho mã {employeeCode} trong folder {_audioFolder}");
+                    Console.WriteLine($"💡 Tạo file: {employeeCode}.mp3 hoặc {employeeCode}.wav");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Lỗi phát audio cho {employeeCode}: {ex.Message}");
+            }
+        }
+
+        private void PlayAudio(string audioFile)
+        {
+            try
+            {
+                using (var audioFileReader = new AudioFileReader(audioFile))
+                using (var outputDevice = new WaveOutEvent())
+                {
+                    outputDevice.Init(audioFileReader);
+                    outputDevice.Play();
+
+                    // Đợi phát xong
+                    while (outputDevice.PlaybackState == PlaybackState.Playing)
+                    {
+                        Thread.Sleep(100);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Lỗi khi phát file {Path.GetFileName(audioFile)}: {ex.Message}");
+            }
+        }
+
+        public void Speak(string text)
+        {
+            try
+            {
+                string textToSpeak = _hasVietnameseVoice ? text : SimplifyForEnglishVoice(text);
+                _synthesizer.Speak(textToSpeak);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Lỗi phát âm: {ex.Message}");
+                Console.WriteLine($"📢 THÔNG BÁO: {text}");
+            }
+        }
+
+        public async Task SpeakAsync(string text)
+        {
+            try
+            {
+                string textToSpeak = _hasVietnameseVoice ? text : SimplifyForEnglishVoice(text);
+                await Task.Run(() => _synthesizer.Speak(textToSpeak));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Lỗi phát âm: {ex.Message}");
+                Console.WriteLine($"📢 THÔNG BÁO: {text}");
+            }
+        }
+
+        private string SimplifyForEnglishVoice(string text)
+        {
+            return text
+                .Replace("Xin mời mã số", "Code")
+                .Replace("mã số", "Code")
+                .Replace("vui lòng chuẩn bị về", "please prepare to leave")
+                .Replace("vui lòng", "please");
+        }
+
+        public void Dispose()
+        {
+            _synthesizer?.Dispose();
+        }
+    }
+}
+
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost;Database=YourDatabase;User Id=sa;Password=YourPassword;TrustServerCertificate=True;"
+  },
+  "AlertSettings": {
+    "CheckIntervalSeconds": 60,
+    "AlertMinutesBefore": 10,
+    "SpeechRate": 0,
+    "SpeechVolume": 100
+  }
+}
+
+using AlerAudio.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// Đăng ký services
+builder.Services.AddSingleton<IOvertimeRepository, OvertimeRepository>();
+builder.Services.AddSingleton<ITextToSpeechService, TextToSpeechService>();
+builder.Services.AddHostedService<OvertimeAlertService>();
+
+// Cấu hình logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+var host = builder.Build();
+
+Console.WriteLine("=== Hệ Thống Cảnh Báo Giờ Về ===");
+Console.WriteLine("Service đang chạy...");
+Console.WriteLine("Kiểm tra tự động mỗi 60 giây");
+Console.WriteLine("Nhấn Ctrl+C để dừng");
+Console.WriteLine("=====================================\n");
+
+await host.RunAsync();
+
+
+
+## Audio setUp
+# Hướng Dẫn Cài Đặt File Audio
+
+## Cấu trúc thư mục
+
+Ứng dụng sẽ tự động tạo folder `AudioFiles` trong thư mục chứa file exe:
+
+```
+AlerAudio/
+├── bin/
+│   └── Debug/
+│       └── net8.0-windows/
+│           ├── AlerAudio.exe
+│           └── AudioFiles/          ← Folder chứa file audio
+│               ├── NV001.mp3
+│               ├── NV002.mp3
+│               ├── NV003.wav
+│               └── ...
+```
+
+## Cách tạo file audio
+
+### Tên file
+- **Tên file phải trùng với mã nhân viên** (Code trong database)
+- Ví dụ: `NV001.mp3`, `NV002.wav`, `EMP123.mp3`
+
+### Định dạng hỗ trợ
+- ✅ `.mp3`
+- ✅ `.wav`
+- ✅ `.wma`
+- ✅ `.m4a`
+
+### Nội dung audio
+Bạn có thể thu âm hoặc tạo file audio với nội dung như:
+- "Xin mời anh/chị Nguyễn Văn A vui lòng chuẩn bị về"
+- "Nhân viên mã số NV001, Nguyễn Văn A, đã đến giờ về"
+- Hoặc bất kỳ nội dung nào bạn muốn
+
+## Cách tạo file audio
+
+### Cách 1: Thu âm trực tiếp
+1. Sử dụng **Voice Recorder** trên Windows
+2. Thu âm nội dung thông báo
+3. Lưu file với tên là mã nhân viên (VD: `NV001.mp3`)
+4. Copy vào folder `AudioFiles`
+
+### Cách 2: Sử dụng Text-to-Speech online
+1. Truy cập: https://ttsmp3.com/text-to-speech/Vietnamese/
+2. Nhập nội dung: "Xin mời anh Nguyễn Văn A vui lòng chuẩn bị về"
+3. Chọn giọng tiếng Việt
+4. Download file MP3
+5. Đổi tên file thành mã nhân viên (VD: `NV001.mp3`)
+6. Copy vào folder `AudioFiles`
+
+### Cách 3: Sử dụng công cụ chuyên nghiệp
+- **Audacity** (miễn phí)
+- **Adobe Audition**
+- **WavePad**
+
+## Cách hoạt động
+
+### Khi có 1 người về:
+```
+Lần 1: Phát NV001.mp3
+Nghỉ 1.5 giây
+Lần 2: Phát NV001.mp3
+Nghỉ 1.5 giây
+Lần 3: Phát NV001.mp3
+```
+
+### Khi có nhiều người về cùng lúc:
+```
+Lần 1: 
+  - Phát NV001.mp3
+  - Delay 0.5s
+  - Phát NV002.mp3
+  - Delay 0.5s
+  - Phát NV003.mp3
+Nghỉ 2 giây
+
+Lần 2:
+  - Phát NV001.mp3
+  - Delay 0.5s
+  - Phát NV002.mp3
+  - Delay 0.5s
+  - Phát NV003.mp3
+Nghỉ 2 giây
+
+Lần 3:
+  - Phát NV001.mp3
+  - Delay 0.5s
+  - Phát NV002.mp3
+  - Delay 0.5s
+  - Phát NV003.mp3
+```
+
+## Lưu ý
+
+- ⚠️ **Nếu không tìm thấy file audio** cho mã nhân viên, hệ thống sẽ hiển thị cảnh báo trong log
+- 💡 Nên tạo file audio cho tất cả nhân viên có thể làm thêm giờ
+- 🔊 Test file audio trước khi sử dụng để đảm bảo âm thanh rõ ràng
+- 📁 Đặt file audio vào đúng folder `AudioFiles` trong thư mục exe
+
+## Kiểm tra
+
+Khi khởi động ứng dụng, nếu chưa có folder `AudioFiles`, hệ thống sẽ:
+1. Tự động tạo folder
+2. Hiển thị đường dẫn folder
+3. Nhắc nhở thêm file audio
+
+## Ví dụ
+
+```
+📁 Đã tạo folder audio: E:\...\AlerAudio\bin\Debug\net8.0-windows\AudioFiles
+💡 Vui lòng thêm các file audio với tên là mã nhân viên (VD: NV001.mp3, NV002.wav)
+```
+
+
+##Configuration 
+
+
+
+# Hướng Dẫn Cấu Hình Chi Tiết
+
+## Tùy chỉnh thời gian kiểm tra và cảnh báo
+
+### 1. Thay đổi khoảng thời gian kiểm tra (mặc định 60 giây)
+
+Mở file `Services/OvertimeAlertService.cs`, tìm dòng:
+```csharp
+private readonly int _checkIntervalSeconds = 60;
+```
+
+Thay đổi thành thời gian mong muốn (đơn vị: giây):
+```csharp
+private readonly int _checkIntervalSeconds = 30; // Kiểm tra mỗi 30 giây
+```
+
+### 2. Thay đổi thời gian cảnh báo trước (mặc định 10 phút)
+
+Tìm dòng:
+```csharp
+private readonly int _alertMinutesBefore = 10;
+```
+
+Thay đổi thành:
+```csharp
+private readonly int _alertMinutesBefore = 15; // Cảnh báo trước 15 phút
+```
+
+## Tùy chỉnh giọng nói
+
+Mở file `Services/TextToSpeechService.cs`:
+
+### 1. Thay đổi tốc độ nói
+```csharp
+_synthesizer.Rate = 0; // -10 (chậm nhất) đến 10 (nhanh nhất)
+```
+
+### 2. Thay đổi âm lượng
+```csharp
+_synthesizer.Volume = 100; // 0 (im lặng) đến 100 (to nhất)
+```
+
+### 3. Thay đổi giọng nam/nữ
+```csharp
+// Giọng nữ
+_synthesizer.SelectVoiceByHints(VoiceGender.Female, VoiceAge.Adult);
+
+// Giọng nam
+_synthesizer.SelectVoiceByHints(VoiceGender.Male, VoiceAge.Adult);
+```
+
+## Tùy chỉnh nội dung thông báo
+
+Mở file `Services/OvertimeAlertService.cs`, tìm các dòng:
+
+### Thông báo cho 1 người:
+```csharp
+var message = $"Xin mời mã số {employee.Code}, {employee.Name}, vui lòng chuẩn bị về";
+```
+
+Có thể thay đổi thành:
+```csharp
+var message = $"Chào {employee.Name}, bạn sắp hết giờ làm thêm, vui lòng chuẩn bị kết thúc công việc";
+```
+
+### Thông báo cho nhiều người:
+```csharp
+var message = $"Xin mời {namesList}, vui lòng chuẩn bị về";
+```
+
+## Kết nối với Database thực tế
+
+### Sử dụng SQL Server
+
+1. Cài đặt package:
+```bash
+dotnet add package Microsoft.Data.SqlClient
+```
+
+2. Bỏ comment trong file `Services/SqlServerOvertimeRepository.cs`
+
+3. Cập nhật `appsettings.json`:
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=YOUR_SERVER;Database=YOUR_DB;User Id=sa;Password=YOUR_PASS;TrustServerCertificate=True;"
+  }
+}
+```
+
+4. Thay đổi `Program.cs`:
+```csharp
+// Đọc connection string từ appsettings.json
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+// Thay đổi từ:
+builder.Services.AddSingleton<IOvertimeRepository, OvertimeRepository>();
+
+// Thành:
+builder.Services.AddSingleton<IOvertimeRepository>(sp => 
+    new SqlServerOvertimeRepository(connectionString ?? ""));
+```
+
+### Sử dụng MySQL
+
+1. Cài đặt package:
+```bash
+dotnet add package MySql.Data
+```
+
+2. Tạo `MySqlOvertimeRepository.cs` tương tự như `SqlServerOvertimeRepository.cs`
+
+## Chạy như Windows Service
+
+Để chạy ứng dụng như một Windows Service:
+
+1. Cài đặt package:
+```bash
+dotnet add package Microsoft.Extensions.Hosting.WindowsServices
+```
+
+2. Thay đổi `Program.cs`:
+```csharp
+var builder = Host.CreateApplicationBuilder(args);
+
+// Thêm dòng này
+builder.Services.AddWindowsService();
+
+// ... các services khác
+```
+
+3. Publish ứng dụng:
+```bash
+dotnet publish -c Release -r win-x64 --self-contained
+```
+
+4. Tạo Windows Service:
+```powershell
+sc.exe create "OvertimeAlertService" binPath="C:\path\to\AlerAudio.exe"
+sc.exe start "OvertimeAlertService"
+```
+
+## Logging vào file
+
+Để lưu log vào file, cài đặt:
+```bash
+dotnet add package Serilog.Extensions.Hosting
+dotnet add package Serilog.Sinks.File
+```
+
+Thêm vào `Program.cs`:
+```csharp
+using Serilog;
+
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.File("logs/overtime-alert-.txt", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
+
+builder.Services.AddLogging(loggingBuilder =>
+{
+    loggingBuilder.AddSerilog();
+});
+```
+
+## Gửi email thông báo
+
+Để gửi email thêm vào thông báo âm thanh:
+
+1. Cài đặt:
+```bash
+dotnet add package MailKit
+```
+
+2. Tạo `EmailService.cs` và gọi trong `OvertimeAlertService.cs`
+
+
+
+# Hướng Dẫn Kết Nối Database
+
+## Bước 1: Cài đặt package SQL Server
+
+```bash
+dotnet add package Microsoft.Data.SqlClient
+```
+
+## Bước 2: Tạo bảng trong SQL Server
+
+Chạy script trong file `Database/CreateTable.sql` trên SQL Server của bạn.
+
+## Bước 3: Cấu hình Connection String
+
+Chỉnh sửa file `appsettings.json`:
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=YOUR_SERVER;Database=YOUR_DATABASE;User Id=YOUR_USER;Password=YOUR_PASSWORD;TrustServerCertificate=True;"
+  }
+}
+```
+
+## Bước 4: Sử dụng SqlServerOvertimeRepository
+
+Trong file `Program.cs`, thay đổi:
+
+```csharp
+// Từ:
+builder.Services.AddSingleton<IOvertimeRepository, OvertimeRepository>();
+
+// Thành:
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.AddSingleton<IOvertimeRepository>(sp => 
+    new SqlServerOvertimeRepository(connectionString));
+```
+
+## Bước 5: Chạy ứng dụng
+
+```bash
+dotnet run
+```
+
+---
+
+## Sử dụng với Entity Framework Core (Tùy chọn)
+
+### 1. Cài đặt packages:
+
+```bash
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add package Microsoft.EntityFrameworkCore.Tools
+```
+
+### 2. Tạo DbContext:
+
+```csharp
+public class AppDbContext : DbContext
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+    
+    public DbSet<Overtime> Overtimes { get; set; }
+}
+```
+
+### 3. Đăng ký trong Program.cs:
+
+```csharp
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+```
+
+### 4. Tạo EF Repository:
+
+```csharp
+public class EfOvertimeRepository : IOvertimeRepository
+{
+    private readonly AppDbContext _context;
+    
+    public EfOvertimeRepository(AppDbContext context)
+    {
+        _context = context;
+    }
+    
+    public async Task<List<Overtime>> GetOvertimesAsync()
+    {
+        return await _context.Overtimes
+            .Where(o => o.Date.Date == DateTime.Today)
+            .OrderBy(o => o.Date)
+            .ToListAsync();
+    }
+}
+```
