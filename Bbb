@@ -1,0 +1,16 @@
+foreach (var item in (System.Collections.IEnumerable)batchData)
+{
+    foreach (var prop in item.GetType().GetProperties())
+    {
+        if (prop.PropertyType == typeof(DateTime))
+        {
+            var value = (DateTime)prop.GetValue(item)!;
+
+            if (value.Kind == DateTimeKind.Unspecified)
+            {
+                var utcValue = DateTime.SpecifyKind(value, DateTimeKind.Utc);
+                prop.SetValue(item, utcValue);
+            }
+        }
+    }
+}
