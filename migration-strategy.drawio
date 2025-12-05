@@ -220,7 +220,7 @@
           <mxGeometry x="930" y="540" width="560" height="300" as="geometry" />
         </mxCell>
         
-        <mxCell id="tech-title" value="🛠️ Technology Stack" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=17;fontStyle=1;fontColor=#5A3A6B;" vertex="1" parent="1">
+        <mxCell id="tech-title" value="✅ Fully Compatible Stack" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=17;fontStyle=1;fontColor=#5A3A6B;" vertex="1" parent="1">
           <mxGeometry x="930" y="555" width="560" height="28" as="geometry" />
         </mxCell>
         
@@ -253,11 +253,11 @@
           <mxGeometry x="970" y="730" width="480" height="10" as="geometry" />
         </mxCell>
         
-        <mxCell id="tech-info" value="100% Compatible with Current Stack" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;fontColor=#5A3A6B;" vertex="1" parent="1">
+        <mxCell id="tech-info" value="Same stack as SQL Server - Zero migration risk" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;fontColor=#5A3A6B;" vertex="1" parent="1">
           <mxGeometry x="970" y="755" width="480" height="20" as="geometry" />
         </mxCell>
         
-        <mxCell id="cost-pg" value="💚 License Cost: $0 Forever" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#008A00;" vertex="1" parent="1">
+        <mxCell id="cost-pg" value="💚 Migration Benefit: $0 License Forever" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#008A00;" vertex="1" parent="1">
           <mxGeometry x="970" y="780" width="480" height="30" as="geometry" />
         </mxCell>
         
