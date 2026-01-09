@@ -1,0 +1,169 @@
+using BackEnd.Models;
+
+namespace BackEnd.Services;
+
+/// <summary>
+/// Kết quả kiểm tra vi phạm 7 ngày làm việc liên tục
+/// </summary>
+public class ConsecutiveWorkDaysResult
+{
+    /// <summary>
+    /// Có vi phạm hay không
+    /// </summary>
+    public bool IsViolation { get; set; }
+
+    /// <summary>
+    /// Số ngày làm việc liên tục hiện tại
+    /// </summary>
+    public int ConsecutiveDays { get; set; }
+
+    /// <summary>
+    /// Danh sách các ngày làm việc liên tục
+    /// </summary>
+    public List<DateTime> ConsecutiveDates { get; set; } = new();
+⁵
+    /// <summary>
+    /// Thông báo
+    /// </summary>
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Service xử lý logic kiểm tra giờ làm việc
+/// </summary>
+public class WorkingTimeService
+{
+    /// <summary>
+    /// Kiểm tra 7 ngày làm việc liên tục
+    /// </summary>
+    /// <param name="employeeCode">Mã nhân viên</param>
+    /// <param name="workingTimes">Danh sách giờ làm việc</param>
+    /// <param name="newWorkingDate">Ngày làm việc mới muốn đăng ký (optional)</param>
+    /// <returns>Kết quả kiểm tra</returns>
+    public ConsecutiveWorkDaysResult CheckConsecutiveWorkDays(
+        string employeeCode,
+        List<WorkingTime> workingTimes,
+        DateTime? newWorkingDate = null)
+    {
+        // Lọc theo mã nhân viên và sắp xếp theo ngày
+        var employeeWorkingDays = workingTimes
+            .Where(w => w.Code == employeeCode)
+            .Select(w => w.Date.Date) // Chỉ lấy phần ngày, bỏ giờ
+            .Distinct()
+            .OrderBy(d => d)
+            .ToList();
+
+        // Nếu có ngày mới muốn đăng ký, thêm vào danh sách
+        if (newWorkingDate.HasValue)
+        {
+            var dateOnly = newWorkingDate.Value.Date;
+            if (!employeeWorkingDays.Contains(dateOnly))
+            {
+                employeeWorkingDays.Add(dateOnly);
+                employeeWorkingDays = employeeWorkingDays.OrderBy(d => d).ToList();
+            }
+        }
+
+        if (employeeWorkingDays.Count == 0)
+        {
+            return new ConsecutiveWorkDaysResult
+            {
+                IsViolation = false,
+                ConsecutiveDays = 0,
+                Message = "Không có dữ liệu làm việc"
+            };
+        }
+
+        // Tìm chuỗi ngày làm việc liên tục dài nhất
+        var maxConsecutiveDays = 0;
+        var currentConsecutiveDays = 1;
+        var maxConsecutiveDates = new List<DateTime> { employeeWorkingDays[0] };
+        var currentConsecutiveDates = new List<DateTime> { employeeWorkingDays[0] };
+
+        for (int i = 1; i < employeeWorkingDays.Count; i++)
+        {
+            var previousDate = employeeWorkingDays[i - 1];
+            var currentDate = employeeWorkingDays[i];
+
+            // Kiểm tra xem ngày hiện tại có liên tiếp với ngày trước không (khoảng cách 1 ngày)
+            if ((currentDate - previousDate).Days == 1)
+            {
+                currentConsecutiveDays++;
+                currentConsecutiveDates.Add(currentDate);
+            }
+            else
+            {
+                // Reset chuỗi hiện tại
+                currentConsecutiveDays = 1;
+                currentConsecutiveDates = new List<DateTime> { currentDate };
+            }
+
+            // Cập nhật chuỗi dài nhất
+            if (currentConsecutiveDays > maxConsecutiveDays)
+            {
+                maxConsecutiveDays = currentConsecutiveDays;
+                maxConsecutiveDates = new List<DateTime>(currentConsecutiveDates);
+            }
+        }
+
+        // Kiểm tra vi phạm (>= 7 ngày liên tục)
+        var isViolation = maxConsecutiveDays >= 7;
+
+        var result = new ConsecutiveWorkDaysResult
+        {
+            IsViolation = isViolation,
+            ConsecutiveDays = maxConsecutiveDays,
+            ConsecutiveDates = maxConsecutiveDates,
+            Message = isViolation
+                ? $"NG - Vi phạm: {maxConsecutiveDays} ngày làm việc liên tục (từ {maxConsecutiveDates.First():dd/MM/yyyy} đến {maxConsecutiveDates.Last():dd/MM/yyyy})"
+                : $"OK - Làm việc {maxConsecutiveDays} ngày liên tục (chưa vi phạm)"
+        };
+
+        return result;
+    }
+
+    /// <summary>
+    /// Kiểm tra xem có thể đăng ký thêm ngày làm việc mới không
+    /// </summary>
+    /// <param name="employeeCode">Mã nhân viên</param>
+    /// <param name="workingTimes">Danh sách giờ làm việc hiện tại</param>
+    /// <param name="newWorkingDate">Ngày muốn đăng ký thêm</param>
+    /// <returns>True nếu có thể đăng ký (không vi phạm), False nếu sẽ vi phạm</returns>
+    public bool CanRegisterNewWorkingDay(
+        string employeeCode,
+        List<WorkingTime> workingTimes,
+        DateTime newWorkingDate)
+    {
+        var result = CheckConsecutiveWorkDays(employeeCode, workingTimes, newWorkingDate);
+        return !result.IsViolation;
+    }
+
+    /// <summary>
+    /// Lấy danh sách ngày có thể đăng ký trong khoảng thời gian
+    /// </summary>
+    /// <param name="employeeCode">Mã nhân viên</param>
+    /// <param name="workingTimes">Danh sách giờ làm việc hiện tại</param>
+    /// <param name="fromDate">Từ ngày</param>
+    /// <param name="toDate">Đến ngày</param>
+    /// <returns>Danh sách các ngày có thể đăng ký</returns>
+    public List<DateTime> GetAvailableDatesForRegistration(
+        string employeeCode,
+        List<WorkingTime> workingTimes,
+        DateTime fromDate,
+        DateTime toDate)
+    {
+        var availableDates = new List<DateTime>();
+        var currentDate = fromDate.Date;
+
+        while (currentDate <= toDate.Date)
+        {
+            if (CanRegisterNewWorkingDay(employeeCode, workingTimes, currentDate))
+            {
+                availableDates.Add(currentDate);
+            }
+            currentDate = currentDate.AddDays(1);
+        }
+
+        return availableDates;
+    }
+}
