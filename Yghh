@@ -1,243 +1,663 @@
-namespace AlerAudio.Models
-{
-    public class Overtime
-    {
-        public string Code { get; set; } = string.Empty;
-        public string Name { get; set; } = string.Empty;
-        public DateTime Date { get; set; }
-        public double Hours { get; set; }
-
-        // Thời gian đăng ký về (giờ:phút được người dùng đăng ký)
-        public TimeSpan RegisteredEndTime { get; set; }
-
-        // Thời gian thực tế về (Date + RegisteredEndTime)
-        public DateTime ActualEndTime
-        {
-            get
-            {
-                return Date.Date.Add(RegisteredEndTime);
-            }
-        }
+<!doctype html>
+<html lang="vi" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PartNo Line Chart</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <script src="/_sdk/element_sdk.js"></script>
+  <style>
+    body {
+      box-sizing: border-box;
+      font-family: 'Be Vietnam Pro', sans-serif;
     }
-}
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+ </head>
+ <body class="h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white"><!-- Main Screen -->
+  <div id="main-screen" class="h-full w-full flex items-center justify-center p-6">
+   <div class="text-center">
+    <div class="mb-8">
+     <div class="inline-flex items-center justify-center w-24 h-24 bg-cyan-500/20 rounded-full mb-6">
+      <svg class="w-12 h-12 text-cyan-400" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+      </svg>
+     </div>
+     <h1 class="text-4xl font-bold text-white mb-3">Biểu Đồ PartNo</h1>
+     <p class="text-slate-400 text-lg mb-8">Phân tích dữ liệu MaxStatus theo thời gian</p>
+    </div><button id="btn-open-chart" class="bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-semibold px-8 py-4 rounded-xl text-lg shadow-lg shadow-cyan-500/50 transition-all duration-300 transform hover:scale-105"> <span class="flex items-center gap-3">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path> <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
+      </svg> Xem Biểu Đồ </span> </button>
+   </div>
+  </div><!-- Modal -->
+  <div id="chart-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-auto">
+   <div class="min-h-full w-full p-4 md:p-6">
+    <div class="bg-slate-900 rounded-2xl shadow-2xl max-w-7xl mx-auto"><!-- Modal Header -->
+     <div class="flex items-center justify-between p-6 border-b border-slate-700">
+      <div>
+       <h2 id="chart-title" class="text-2xl font-bold text-cyan-400">Biểu Đồ PartNo Theo Thời Gian</h2>
+       <p class="text-slate-400 text-sm mt-1">Dữ liệu MaxStatus từ 00:00 đến 24:00 (1000 điểm dữ liệu/PartNo)</p>
+      </div><button id="btn-close-modal" class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-800 rounded-lg">
+       <svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+       </svg></button>
+     </div><!-- Modal Content -->
+     <div class="p-6">
+      <!-- Modal Content -->
+      <div class="p-6"><!-- Data Source Selection -->
+       <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 mb-6">
+        <div class="flex flex-wrap items-center gap-4">
+         <div class="flex items-center gap-2"><label class="text-sm text-slate-400 font-medium">Nguồn dữ liệu:</label> <select id="data-source-select" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"> <option value="mock">Dữ liệu giả lập</option> <option value="api">API Server</option> </select>
+         </div>
+         <div id="api-config" class="hidden flex-1 flex items-center gap-2"><input type="text" id="api-url" placeholder="Nhập URL API (VD: https://api.example.com/data)" class="flex-1 bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"> <button id="btn-load-api" class="bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap"> Tải dữ liệu </button>
+         </div>
+         <div id="loading-indicator" class="hidden flex items-center gap-2">
+          <div class="animate-spin rounded-full h-4 w-4 border-2 border-cyan-500 border-t-transparent"></div><span class="text-sm text-slate-400">Đang tải...</span>
+         </div>
+         <div id="api-status" class="text-sm"></div>
+        </div>
+       </div><!-- Stats Cards -->
+       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+         <div class="text-slate-400 text-xs uppercase tracking-wide mb-1">
+          Tổng bản ghi
+         </div>
+         <div id="stat-total" class="text-2xl font-bold text-cyan-400">
+          0
+         </div>
+        </div>
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+         <div class="text-slate-400 text-xs uppercase tracking-wide mb-1">
+          MaxStatus cao nhất
+         </div>
+         <div id="stat-max" class="text-2xl font-bold text-emerald-400">
+          0
+         </div>
+        </div>
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+         <div class="text-slate-400 text-xs uppercase tracking-wide mb-1">
+          MaxStatus thấp nhất
+         </div>
+         <div id="stat-min" class="text-2xl font-bold text-rose-400">
+          0
+         </div>
+        </div>
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+         <div class="text-slate-400 text-xs uppercase tracking-wide mb-1">
+          Trung bình
+         </div>
+         <div id="stat-avg" class="text-2xl font-bold text-amber-400">
+          0
+         </div>
+        </div>
+       </div><!-- Chart Container -->
+       <div class="bg-slate-800 rounded-2xl p-6 border border-slate-700 mb-6">
+        <div class="mb-4 flex flex-wrap gap-3 items-center">
+         <div class="flex items-center gap-2"><label class="text-sm text-slate-400 font-medium">Hiển thị:</label> <select id="zoom-select" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"> <option value="60">1 giờ</option> <option value="120">2 giờ</option> <option value="180">3 giờ</option> <option value="360">6 giờ</option> <option value="720">12 giờ</option> <option value="1440" selected>24 giờ (Tất cả)</option> </select>
+         </div>
+         <div class="flex gap-2"><button id="btn-pan-left" class="bg-slate-700 hover:bg-slate-600 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors border border-slate-600"> ← Trước </button> <button id="btn-pan-right" class="bg-slate-700 hover:bg-slate-600 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors border border-slate-600"> Sau → </button> <button id="btn-reset" class="bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"> Đặt lại </button>
+         </div>
+        </div>
+        <div class="overflow-x-auto">
+         <div style="min-width: 800px;">
+          <canvas id="partNoChart"></canvas>
+         </div>
+        </div>
+       </div><!-- Data Table -->
+       <div class="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700">
+         <h2 class="text-lg font-semibold text-white">Dữ Liệu Chi Tiết</h2>
+        </div>
+        <div class="overflow-x-auto max-h-64 overflow-y-auto">
+         <table class="w-full">
+          <thead class="bg-slate-700/50 sticky top-0">
+           <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">STT</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">PartNo</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">StartTime</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">EndTime</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">MaxStatus</th>
+           </tr>
+          </thead>
+          <tbody id="data-table-body" class="divide-y divide-slate-700">
+          </tbody>
+         </table>
+        </div>
+       </div>
+      </div>
+     </div>
+    </div>
+   </div>
+   <script>
+    // Simulated database data - 1000 records per PartNo
+    function generateSimulatedData() {
+      const data = [];
+      const partNumbers = ['PN-001', 'PN-002', 'PN-003', 'PN-004', 'PN-005'];
+      const baseTime = new Date();
+      baseTime.setHours(0, 0, 0, 0); // Start at 00:00 AM
+      
+      // Generate 1000 data points per PartNo over 24 hours
+      const totalMinutes = 24 * 60; // 24 hours in minutes
+      const intervalSeconds = (totalMinutes * 60) / 1000; // Interval between data points in seconds
 
+      partNumbers.forEach(partNo => {
+        for (let i = 0; i < 1000; i++) {
+          const startTime = new Date(baseTime.getTime() + i * intervalSeconds * 1000);
+          const endTime = new Date(startTime.getTime() + (intervalSeconds * 0.8) * 1000);
+          const maxStatus = Math.floor(Math.random() * 100) + 1;
 
-
-using AlerAudio.Models;
-
-namespace AlerAudio.Services
-{
-    public class OvertimeRepository : IOvertimeRepository
-    {
-        // Demo data - Thay thế bằng database thực tế
-        public async Task<List<Overtime>> GetOvertimesAsync()
-        {
-            // TODO: Kết nối với database thực tế
-            // Ví dụ data demo - Người dùng đăng ký giờ về
-            var today = DateTime.Today;
-            
-            return await Task.FromResult(new List<Overtime>
-            {
-                new Overtime 
-                { 
-                    Code = "NV001", 
-                    Name = "Nguyễn Văn A", 
-                    Date = today,
-                    Hours = 0, // Không dùng Hours nữa
-                    RegisteredEndTime = new TimeSpan(17, 30, 0) // Đăng ký về lúc 17:30
-                },
-                new Overtime 
-                { 
-                    Code = "NV002", 
-                    Name = "Trần Thị B", 
-                    Date = today,
-                    Hours = 0,
-                    RegisteredEndTime = new TimeSpan(17, 30, 0) // Đăng ký về lúc 17:30 (cùng với A)
-                },
-                new Overtime 
-                { 
-                    Code = "NV003", 
-                    Name = "Lê Văn C", 
-                    Date = today,
-                    Hours = 0,
-                    RegisteredEndTime = new TimeSpan(17, 40, 0) // Đăng ký về lúc 17:40
-                },
-                new Overtime 
-                { 
-                    Code = "NV004", 
-                    Name = "Phạm Văn D", 
-                    Date = today,
-                    Hours = 0,
-                    RegisteredEndTime = new TimeSpan(17, 45, 0) // Đăng ký về lúc 17:45
-                },
-                new Overtime 
-                { 
-                    Code = "NV005", 
-                    Name = "Hoàng Thị E", 
-                    Date = today,
-                    Hours = 0,
-                    RegisteredEndTime = new TimeSpan(17, 45, 0) // Đăng ký về lúc 17:45 (cùng với D)
-                }
-            });
+          data.push({
+            StartTime: startTime,
+            EndTime: endTime,
+            PartNo: partNo,
+            MaxStatus: maxStatus
+          });
         }
+      });
+
+      // Sort by StartTime
+      return data.sort((a, b) => a.StartTime - b.StartTime);
     }
-}
 
+    let databaseData = generateSimulatedData();
+    let chartInstance = null;
+    let currentViewMinutes = 1440; // Default: show all 24 hours
+    let currentPanOffset = 0; // Pan offset in minutes
+    let currentDataSource = 'mock'; // 'mock' or 'api'
 
+    const defaultConfig = {
+      chart_title: 'Biểu Đồ PartNo Theo Thời Gian',
+      primary_color: '#06b6d4',
+      secondary_color: '#1e293b',
+      text_color: '#f1f5f9',
+      accent_color: '#10b981',
+      background_color: '#0f172a'
+    };
 
-using AlerAudio.Models;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-
-namespace AlerAudio.Services
-{
-    public class OvertimeAlertService : BackgroundService
-    {
-        private readonly IOvertimeRepository _overtimeRepository;
-        private readonly ITextToSpeechService _textToSpeechService;
-        private readonly ILogger<OvertimeAlertService> _logger;
-        private readonly HashSet<string> _alertedCodes = new HashSet<string>();
-        private readonly int _checkIntervalSeconds = 60;
-        private readonly int _alertMinutesBefore = 2; // Cảnh báo trước 2 phút
-
-        public OvertimeAlertService(
-            IOvertimeRepository overtimeRepository,
-            ITextToSpeechService textToSpeechService,
-            ILogger<OvertimeAlertService> logger)
-        {
-            _overtimeRepository = overtimeRepository;
-            _textToSpeechService = textToSpeechService;
-            _logger = logger;
-        }
-
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            _logger.LogInformation("Overtime Alert Service đang chạy...");
-
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await CheckAndAlertAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Lỗi khi kiểm tra overtime");
-                }
-
-                // Đợi 60 giây trước khi kiểm tra lần tiếp theo
-                await Task.Delay(TimeSpan.FromSeconds(_checkIntervalSeconds), stoppingToken);
-            }
-        }
-
-        private async Task CheckAndAlertAsync()
-        {
-            var overtimes = await _overtimeRepository.GetOvertimesAsync();
-            var now = DateTime.Now;
-
-            // Lọc những người sắp đến giờ về (trong vòng 2 phút tới)
-            var upcomingEndTimes = overtimes
-                .Where(o => !_alertedCodes.Contains(o.Code)) // Chưa được cảnh báo
-                .Where(o => o.ActualEndTime >= now && o.ActualEndTime <= now.AddMinutes(_alertMinutesBefore))
-                .OrderBy(o => o.ActualEndTime)
-                .ToList();
-
-            if (upcomingEndTimes.Any())
-            {
-                _logger.LogInformation($"Tìm thấy {upcomingEndTimes.Count} người sắp đến giờ về");
-
-                // Nhóm theo giờ đăng ký (giờ:phút giống nhau)
-                var groupedByTime = upcomingEndTimes
-                    .GroupBy(o => o.RegisteredEndTime)
-                    .OrderBy(g => g.Key)
-                    .ToList();
-
-                _logger.LogInformation($"Có {groupedByTime.Count} khung giờ khác nhau");
-
-                foreach (var group in groupedByTime)
-                {
-                    var employees = group.ToList();
-                    var registeredTime = group.Key.ToString(@"hh\:mm");
-                    
-                    if (employees.Count == 1)
-                    {
-                        // Chỉ 1 người đăng ký giờ này
-                        var employee = employees[0];
-                        _logger.LogInformation($"Thông báo: {employee.Code} - {employee.Name} (Đăng ký về lúc {registeredTime})");
-                        
-                        // Lặp lại 3 lần: Mở đầu -> Tên -> Kết thúc
-                        for (int i = 0; i < 3; i++)
-                        {
-                            _logger.LogInformation($"Lần thông báo {i + 1}/3");
-                            
-                            await _textToSpeechService.PlayStartAudioAsync();
-                            await Task.Delay(300);
-                            await _textToSpeechService.PlayAudioFileAsync(employee.Code);
-                            await Task.Delay(300);
-                            await _textToSpeechService.PlayEndAudioAsync();
-                            
-                            if (i < 2)
-                            {
-                                await Task.Delay(2000);
-                            }
-                        }
-                        
-                        _alertedCodes.Add(employee.Code);
-                    }
-                    else
-                    {
-                        // Nhiều người cùng đăng ký giờ này
-                        var namesList = string.Join(", ", employees.Select(e => $"{e.Code} {e.Name}"));
-                        _logger.LogInformation($"Thông báo nhóm {employees.Count} người đăng ký về lúc {registeredTime}: {namesList}");
-                        
-                        // Lặp lại 3 lần: Mở đầu -> Danh sách tất cả -> Kết thúc
-                        for (int round = 0; round < 3; round++)
-                        {
-                            _logger.LogInformation($"Lần thông báo {round + 1}/3 cho khung giờ {registeredTime}");
-                            
-                            await _textToSpeechService.PlayStartAudioAsync();
-                            await Task.Delay(500);
-                            
-                            foreach (var emp in employees)
-                            {
-                                await _textToSpeechService.PlayAudioFileAsync(emp.Code);
-                                await Task.Delay(500);
-                            }
-                            
-                            await Task.Delay(300);
-                            await _textToSpeechService.PlayEndAudioAsync();
-                            
-                            if (round < 2)
-                            {
-                                await Task.Delay(2000);
-                            }
-                        }
-                        
-                        foreach (var emp in employees)
-                        {
-                            _alertedCodes.Add(emp.Code);
-                        }
-                    }
-
-                    // Delay giữa các nhóm giờ khác nhau
-                    if (groupedByTime.IndexOf(group) < groupedByTime.Count - 1)
-                    {
-                        _logger.LogInformation("Chuyển sang nhóm giờ tiếp theo...");
-                        await Task.Delay(3000);
-                    }
-                }
-            }
-
-            // Reset danh sách đã cảnh báo cho những người đã quá giờ
-            var expiredCodes = overtimes
-                .Where(o => _alertedCodes.Contains(o.Code) && o.ActualEndTime < now.AddMinutes(-30))
-                .Select(o => o.Code)
-                .ToList();
-
-            foreach (var code in expiredCodes)
-            {
-                _alertedCodes.Remove(code);
-            }
-        }
+    function formatTime(date) {
+      return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     }
-}
+
+    function formatDateTime(date) {
+      return date.toLocaleString('vi-VN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    // Load data from API
+    async function loadDataFromAPI(url) {
+      const loadingIndicator = document.getElementById('loading-indicator');
+      const apiStatus = document.getElementById('api-status');
+      
+      loadingIndicator.classList.remove('hidden');
+      apiStatus.textContent = '';
+      apiStatus.className = 'text-sm';
+
+      try {
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const jsonData = await response.json();
+        
+        // Validate and transform API data
+        // Expected format: array of objects with { StartTime, EndTime, PartNo, MaxStatus }
+        if (!Array.isArray(jsonData)) {
+          throw new Error('Dữ liệu API phải là một mảng');
+        }
+
+        const transformedData = jsonData.map((item, index) => {
+          // Parse dates - handle both ISO strings and timestamps
+          let startTime = item.StartTime || item.startTime || item.start_time;
+          let endTime = item.EndTime || item.endTime || item.end_time;
+          
+          if (typeof startTime === 'string' || typeof startTime === 'number') {
+            startTime = new Date(startTime);
+          }
+          if (typeof endTime === 'string' || typeof endTime === 'number') {
+            endTime = new Date(endTime);
+          }
+
+          if (!startTime || isNaN(startTime.getTime())) {
+            throw new Error(`Dữ liệu không hợp lệ tại index ${index}: StartTime không đúng định dạng`);
+          }
+
+          return {
+            StartTime: startTime,
+            EndTime: endTime || new Date(startTime.getTime() + 60000), // Default 1 minute if no EndTime
+            PartNo: item.PartNo || item.partNo || item.part_no || `PART-${index}`,
+            MaxStatus: parseInt(item.MaxStatus || item.maxStatus || item.max_status || 0)
+          };
+        });
+
+        loadingIndicator.classList.add('hidden');
+        apiStatus.textContent = `✓ Đã tải ${transformedData.length} bản ghi`;
+        apiStatus.className = 'text-sm text-emerald-400';
+        
+        return transformedData;
+      } catch (error) {
+        loadingIndicator.classList.add('hidden');
+        apiStatus.textContent = `✗ Lỗi: ${error.message}`;
+        apiStatus.className = 'text-sm text-rose-400';
+        console.error('API Error:', error);
+        return null;
+      }
+    }
+
+    function updateStats(data) {
+      const maxStatusValues = data.map(d => d.MaxStatus);
+      const total = data.length;
+      const max = Math.max(...maxStatusValues);
+      const min = Math.min(...maxStatusValues);
+      const avg = (maxStatusValues.reduce((a, b) => a + b, 0) / total).toFixed(1);
+
+      document.getElementById('stat-total').textContent = total;
+      document.getElementById('stat-max').textContent = max;
+      document.getElementById('stat-min').textContent = min;
+      document.getElementById('stat-avg').textContent = avg;
+    }
+
+    function renderTable(data) {
+      const tbody = document.getElementById('data-table-body');
+      tbody.innerHTML = data.map((item, index) => `
+        <tr class="hover:bg-slate-700/50 transition-colors">
+          <td class="px-4 py-3 text-sm text-slate-300">${index + 1}</td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-500/20 text-cyan-400">
+              ${item.PartNo}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-sm text-slate-300">${formatDateTime(item.StartTime)}</td>
+          <td class="px-4 py-3 text-sm text-slate-300">${formatDateTime(item.EndTime)}</td>
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-2">
+              <div class="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-cyan-500 to-emerald-500 rounded-full" style="width: ${item.MaxStatus}%"></div>
+              </div>
+              <span class="text-sm font-medium text-white">${item.MaxStatus}</span>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function createChart(data, config) {
+      const ctx = document.getElementById('partNoChart').getContext('2d');
+      
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      // Calculate time range for display
+      const baseTime = new Date();
+      baseTime.setHours(0, 0, 0, 0);
+      const minTime = new Date(baseTime.getTime() + currentPanOffset * 60 * 1000);
+      const maxTime = new Date(minTime.getTime() + currentViewMinutes * 60 * 1000);
+
+      // Filter data based on current view window
+      const filteredData = data.filter(item => {
+        return item.StartTime >= minTime && item.StartTime <= maxTime;
+      });
+
+      // Group data by PartNo
+      const groupedData = {};
+      filteredData.forEach(item => {
+        if (!groupedData[item.PartNo]) {
+          groupedData[item.PartNo] = [];
+        }
+        groupedData[item.PartNo].push({
+          x: item.StartTime,
+          y: item.MaxStatus
+        });
+      });
+
+      const colors = [
+        { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.1)' },
+        { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
+        { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
+        { border: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
+        { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)' }
+      ];
+
+      const datasets = Object.keys(groupedData).map((partNo, index) => ({
+        label: partNo,
+        data: groupedData[partNo].sort((a, b) => a.x - b.x),
+        borderColor: colors[index % colors.length].border,
+        backgroundColor: colors[index % colors.length].bg,
+        fill: true,
+        tension: 0.4,
+        pointRadius: currentViewMinutes <= 120 ? 4 : 2,
+        pointHoverRadius: 6,
+        pointBackgroundColor: colors[index % colors.length].border,
+        pointBorderColor: '#1e293b',
+        pointBorderWidth: 2,
+        borderWidth: 2
+      }));
+
+      // Determine time unit based on zoom level
+      let timeUnit = 'hour';
+      let stepSize = 1;
+      if (currentViewMinutes <= 60) {
+        timeUnit = 'minute';
+        stepSize = 10;
+      } else if (currentViewMinutes <= 120) {
+        timeUnit = 'minute';
+        stepSize = 30;
+      }
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: 2.5,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                color: config.text_color || defaultConfig.text_color,
+                font: {
+                  family: "'Be Vietnam Pro', sans-serif",
+                  size: 12,
+                  weight: '500'
+                },
+                usePointStyle: true,
+                pointStyle: 'circle',
+                padding: 20
+              }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(30, 41, 59, 0.95)',
+              titleColor: '#fff',
+              bodyColor: '#94a3b8',
+              borderColor: '#475569',
+              borderWidth: 1,
+              cornerRadius: 12,
+              padding: 12,
+              titleFont: {
+                family: "'Be Vietnam Pro', sans-serif",
+                size: 14,
+                weight: '600'
+              },
+              bodyFont: {
+                family: "'Be Vietnam Pro', sans-serif",
+                size: 12
+              },
+              callbacks: {
+                title: function(tooltipItems) {
+                  return formatDateTime(new Date(tooltipItems[0].parsed.x));
+                },
+                label: function(context) {
+                  return `${context.dataset.label}: MaxStatus = ${context.parsed.y}`;
+                }
+              }
+            },
+            zoom: {
+              pan: {
+                enabled: true,
+                mode: 'x'
+              },
+              zoom: {
+                wheel: {
+                  enabled: true
+                },
+                pinch: {
+                  enabled: true
+                },
+                mode: 'x'
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              min: minTime,
+              max: maxTime,
+              time: {
+                unit: timeUnit,
+                stepSize: stepSize,
+                displayFormats: {
+                  minute: 'HH:mm',
+                  hour: 'HH:mm'
+                }
+              },
+              title: {
+                display: true,
+                text: 'StartTime',
+                color: '#94a3b8',
+                font: {
+                  family: "'Be Vietnam Pro', sans-serif",
+                  size: 12,
+                  weight: '500'
+                }
+              },
+              grid: {
+                color: 'rgba(71, 85, 105, 0.3)',
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8',
+                font: {
+                  family: "'Be Vietnam Pro', sans-serif",
+                  size: 11
+                },
+                maxRotation: 45,
+                minRotation: 0
+              }
+            },
+            y: {
+              beginAtZero: true,
+              max: 110,
+              title: {
+                display: true,
+                text: 'MaxStatus',
+                color: '#94a3b8',
+                font: {
+                  family: "'Be Vietnam Pro', sans-serif",
+                  size: 12,
+                  weight: '500'
+                }
+              },
+              grid: {
+                color: 'rgba(71, 85, 105, 0.3)',
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8',
+                font: {
+                  family: "'Be Vietnam Pro', sans-serif",
+                  size: 11
+                },
+                stepSize: 20
+              }
+            }
+          },
+          animation: {
+            duration: 400,
+            easing: 'easeOutQuart'
+          }
+        }
+      });
+    }
+
+    async function onConfigChange(config) {
+      const titleEl = document.getElementById('chart-title');
+      titleEl.textContent = config.chart_title || defaultConfig.chart_title;
+      
+      document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+      
+      createChart(databaseData, config);
+    }
+
+    function mapToCapabilities(config) {
+      return {
+        recolorables: [
+          {
+            get: () => config.background_color || defaultConfig.background_color,
+            set: (value) => {
+              config.background_color = value;
+              window.elementSdk.setConfig({ background_color: value });
+            }
+          },
+          {
+            get: () => config.secondary_color || defaultConfig.secondary_color,
+            set: (value) => {
+              config.secondary_color = value;
+              window.elementSdk.setConfig({ secondary_color: value });
+            }
+          },
+          {
+            get: () => config.text_color || defaultConfig.text_color,
+            set: (value) => {
+              config.text_color = value;
+              window.elementSdk.setConfig({ text_color: value });
+            }
+          },
+          {
+            get: () => config.primary_color || defaultConfig.primary_color,
+            set: (value) => {
+              config.primary_color = value;
+              window.elementSdk.setConfig({ primary_color: value });
+            }
+          },
+          {
+            get: () => config.accent_color || defaultConfig.accent_color,
+            set: (value) => {
+              config.accent_color = value;
+              window.elementSdk.setConfig({ accent_color: value });
+            }
+          }
+        ],
+        borderables: [],
+        fontEditable: undefined,
+        fontSizeable: undefined
+      };
+    }
+
+    function mapToEditPanelValues(config) {
+      return new Map([
+        ['chart_title', config.chart_title || defaultConfig.chart_title]
+      ]);
+    }
+
+    // Initialize
+    if (window.elementSdk) {
+      window.elementSdk.init({
+        defaultConfig,
+        onConfigChange,
+        mapToCapabilities,
+        mapToEditPanelValues
+      });
+    }
+
+    // Modal controls
+    document.getElementById('btn-open-chart').addEventListener('click', function() {
+      document.getElementById('chart-modal').classList.remove('hidden');
+      // Initialize chart when modal opens for the first time
+      if (!chartInstance) {
+        updateStats(databaseData);
+        renderTable(databaseData);
+        createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+      }
+    });
+
+    document.getElementById('btn-close-modal').addEventListener('click', function() {
+      document.getElementById('chart-modal').classList.add('hidden');
+    });
+
+    // Close modal when clicking outside
+    document.getElementById('chart-modal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        document.getElementById('chart-modal').classList.add('hidden');
+      }
+    });
+
+    // Setup zoom and pan controls
+    document.getElementById('zoom-select').addEventListener('change', function(e) {
+      currentViewMinutes = parseInt(e.target.value);
+      currentPanOffset = 0; // Reset pan when changing zoom
+      createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+    });
+
+    document.getElementById('btn-pan-left').addEventListener('click', function() {
+      const panStep = currentViewMinutes / 4; // Pan by 1/4 of current view
+      currentPanOffset = Math.max(0, currentPanOffset - panStep);
+      createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+    });
+
+    document.getElementById('btn-pan-right').addEventListener('click', function() {
+      const panStep = currentViewMinutes / 4; // Pan by 1/4 of current view
+      const maxOffset = 1440 - currentViewMinutes; // Max 24 hours
+      currentPanOffset = Math.min(maxOffset, currentPanOffset + panStep);
+      createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', function() {
+      currentViewMinutes = 1440;
+      currentPanOffset = 0;
+      document.getElementById('zoom-select').value = '1440';
+      createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+    });
+
+    // Data source controls
+    document.getElementById('data-source-select').addEventListener('change', function(e) {
+      currentDataSource = e.target.value;
+      const apiConfig = document.getElementById('api-config');
+      const apiStatus = document.getElementById('api-status');
+      
+      if (currentDataSource === 'api') {
+        apiConfig.classList.remove('hidden');
+      } else {
+        apiConfig.classList.add('hidden');
+        apiStatus.textContent = '';
+        // Switch back to mock data
+        databaseData = generateSimulatedData();
+        updateStats(databaseData);
+        renderTable(databaseData);
+        createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+      }
+    });
+
+    document.getElementById('btn-load-api').addEventListener('click', async function() {
+      const apiUrl = document.getElementById('api-url').value.trim();
+      
+      if (!apiUrl) {
+        const apiStatus = document.getElementById('api-status');
+        apiStatus.textContent = '✗ Vui lòng nhập URL API';
+        apiStatus.className = 'text-sm text-amber-400';
+        return;
+      }
+
+      const data = await loadDataFromAPI(apiUrl);
+      
+      if (data && data.length > 0) {
+        databaseData = data;
+        updateStats(databaseData);
+        renderTable(databaseData);
+        createChart(databaseData, window.elementSdk ? window.elementSdk.config : defaultConfig);
+      }
+    });
+
+    // Allow Enter key to load API
+    document.getElementById('api-url').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        document.getElementById('btn-load-api').click();
+      }
+    });
+  </script>
+  </div>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9bc920c7d0b9aa0f',t:'MTc2ODE4MzkzNy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
